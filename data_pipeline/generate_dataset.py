@@ -4,6 +4,7 @@ import os
 import numpy as np
 import argparse
 from pathlib import Path
+from tqdm import tqdm
 
 # Import solvers
 from solvers.method_of_steps import solve_dde
@@ -48,9 +49,8 @@ def make_family_dataset(family, N=10000, τ_range=(0.5, 5.0), T=50.0, dt=0.1,
     
     print(f"Generating {N} samples for {family.__name__}...")
     
-    for i in range(N):
-        if i > 0 and i % 100 == 0:
-            print(f"  Progress: {i}/{N}")
+    # Use tqdm for progress tracking
+    for i in tqdm(range(N), desc=f"Generating {family.__name__} datasets", ncols=100):
         
         # Sample delay value
         τ = np.random.uniform(*τ_range)
@@ -116,55 +116,63 @@ def generate_all_datasets(config):
         
         family = family_map[family_name]
         
-        # Generate dataset
-        data = make_family_dataset(
-            family,
-            N=config['N'],
-            τ_range=config['τ_range'],
-            T=config['T'],
-            dt=config['dt'],
-            history_type=config['history_type'],
-            output_dir=config['output_dir']
-        )
-        
-        # Split into train/test if specified
-        if config['τ_split'] is not None:
-            train_data, test_data = create_train_test_split(data, τ_split=config['τ_split'])
+        try:
+            # Generate dataset
+            data = make_family_dataset(
+                family,
+                N=config['N'],
+                τ_range=config['τ_range'],
+                T=config['T'],
+                dt=config['dt'],
+                history_type=config['history_type'],
+                output_dir=config['output_dir']
+            )
             
-            # Save train/test datasets
-            train_filename = os.path.join(config['output_dir'], f"{family_name}_train.pkl")
-            test_filename = os.path.join(config['output_dir'], f"{family_name}_test.pkl")
+            # Split into train/test if specified
+            if config['τ_split'] is not None:
+                train_data, test_data = create_train_test_split(data, τ_split=config['τ_split'])
+                
+                # Save train/test datasets
+                train_filename = os.path.join(config['output_dir'], f"{family_name}_train.pkl")
+                test_filename = os.path.join(config['output_dir'], f"{family_name}_test.pkl")
+                
+                save_dataset(train_data, train_filename)
+                save_dataset(test_data, test_filename)
+                
+                # Optionally plot some examples
+                if config['plot_examples']:
+                    for dataset, name in [(train_data, 'train'), (test_data, 'test')]:
+                        if len(dataset) > 0:
+                            idx = np.random.randint(len(dataset))
+                            hist_data, τ, t, y = dataset[idx]
+                            plot_path = os.path.join(config['output_dir'], f"{family_name}_{name}_example.png")
+                            # Use t and y for plotting (skip history function which is now serialized data)
+                            plot_solution(t, y, τ, None, 
+                                        title=f"{family_name} - {name} example, τ={τ:.2f}",
+                                        save_path=plot_path)
+                            print(f"Saved example plot to {plot_path}")
+            else:
+                # Save full dataset
+                filename = os.path.join(config['output_dir'], f"{family_name}.pkl")
+                save_dataset(data, filename)
+                
+                # Optionally plot an example
+                if config['plot_examples'] and len(data) > 0:
+                    idx = np.random.randint(len(data))
+                    hist_data, τ, t, y = data[idx]
+                    plot_path = os.path.join(config['output_dir'], f"{family_name}_example.png")
+                    # Use t and y for plotting (skip history function which is now serialized data)
+                    plot_solution(t, y, τ, None, 
+                                title=f"{family_name} example, τ={τ:.2f}",
+                                save_path=plot_path)
+                    print(f"Saved example plot to {plot_path}")
             
-            save_dataset(train_data, train_filename)
-            save_dataset(test_data, test_filename)
+            print(f"✓ Successfully generated dataset for {family_name}")
             
-            print(f"Saved {len(train_data)} training samples to {train_filename}")
-            print(f"Saved {len(test_data)} test samples to {test_filename}")
-            
-            # Optionally plot some examples
-            if config['plot_examples']:
-                for dataset, name in [(train_data, 'train'), (test_data, 'test')]:
-                    if len(dataset) > 0:
-                        idx = np.random.randint(len(dataset))
-                        hist, τ, t, y = dataset[idx]
-                        plot_path = os.path.join(config['output_dir'], f"{family_name}_{name}_example.png")
-                        plot_solution(t, y, τ, hist, 
-                                    title=f"{family_name} - {name} example, τ={τ:.2f}",
-                                    save_path=plot_path)
-        else:
-            # Save full dataset
-            filename = os.path.join(config['output_dir'], f"{family_name}.pkl")
-            save_dataset(data, filename)
-            print(f"Saved {len(data)} samples to {filename}")
-            
-            # Optionally plot an example
-            if config['plot_examples'] and len(data) > 0:
-                idx = np.random.randint(len(data))
-                hist, τ, t, y = data[idx]
-                plot_path = os.path.join(config['output_dir'], f"{family_name}_example.png")
-                plot_solution(t, y, τ, hist, 
-                            title=f"{family_name} example, τ={τ:.2f}",
-                            save_path=plot_path)
+        except Exception as e:
+            print(f"✗ Failed to generate dataset for {family_name}: {str(e)}")
+            import traceback
+            traceback.print_exc()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Generate DDE datasets for Delay-NO training')

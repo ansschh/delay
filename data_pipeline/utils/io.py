@@ -22,35 +22,68 @@ def save_dataset(data, filename, format='pickle'):
     # Create directory if it doesn't exist
     os.makedirs(os.path.dirname(filename), exist_ok=True)
     
+    # Process the data to make it serializable
+    processed_data = []
+    
+    for item in data:
+        # Each item is typically (hist, τ, t, y)
+        hist_func, tau, t_values, y_values = item
+        
+        # Sample the history function on a grid to make it serializable
+        t_hist = np.linspace(-tau, 0, 100)  # 100 points in history interval
+        try:
+            # Try to sample the history function
+            if isinstance(hist_func, tuple) and len(hist_func) == 2 and callable(hist_func[0]):
+                # This is for neutral DDEs with (hist, hist_prime)
+                hist_samples = np.array([hist_func[0](ti) for ti in t_hist])
+                hist_prime_samples = np.array([hist_func[1](ti) for ti in t_hist])
+                hist_data = {
+                    'type': 'neutral_history',
+                    't': t_hist.tolist(),
+                    'y': hist_samples.tolist(),
+                    'y_prime': hist_prime_samples.tolist()
+                }
+            elif callable(hist_func):
+                # Regular history function
+                hist_samples = np.array([hist_func(ti) for ti in t_hist])
+                hist_data = {
+                    'type': 'history',
+                    't': t_hist.tolist(),
+                    'y': hist_samples.tolist()
+                }
+            else:
+                # If it's not callable, just store it as is
+                hist_data = {'type': 'unknown', 'data': str(hist_func)}
+        except Exception as e:
+            # If sampling fails, just store a placeholder
+            hist_data = {'type': 'error', 'error': str(e)}
+        
+        # Create the processed item
+        processed_item = (hist_data, tau, t_values, y_values)
+        processed_data.append(processed_item)
+    
     if format == 'pickle':
         with open(filename, 'wb') as f:
-            pickle.dump(data, f)
+            pickle.dump(processed_data, f)
     elif format == 'json':
         # Convert numpy arrays to lists for JSON serialization
-        if isinstance(data, list):
-            json_data = []
-            for item in data:
-                if isinstance(item, tuple):
-                    json_item = []
-                    for elem in item:
-                        if callable(elem):  # Handle history functions
-                            # For history functions, we can't directly serialize them
-                            # We'll just record that it was a function
-                            json_item.append({'type': 'function', 'info': 'history_function'})
-                        elif isinstance(elem, np.ndarray):
-                            json_item.append(elem.tolist())
-                        else:
-                            json_item.append(elem)
-                    json_data.append(json_item)
-                else:
-                    json_data.append(item)
+        json_data = []
+        for item in processed_data:
+            hist_data, tau, t_values, y_values = item
+            json_item = [
+                hist_data,
+                tau,
+                t_values.tolist() if isinstance(t_values, np.ndarray) else t_values,
+                y_values.tolist() if isinstance(y_values, np.ndarray) else y_values
+            ]
+            json_data.append(json_item)
             
-            with open(filename, 'w') as f:
-                json.dump(json_data, f)
-        else:
-            raise ValueError("JSON format only supports list data for now")
+        with open(filename, 'w') as f:
+            json.dump(json_data, f)
     else:
         raise ValueError(f"Unsupported format: {format}")
+    
+    print(f"Saved {len(processed_data)} samples to {filename}")
 
 def load_dataset(filename):
     """
@@ -87,8 +120,8 @@ def plot_solution(t, y, τ, history=None, title=None, save_path=None):
         Solution values
     τ : float
         Delay value
-    history : callable, optional
-        History function (default=None)
+    history : callable or dict, optional
+        History function or serialized history data (default=None)
     title : str, optional
         Plot title (default=None)
     save_path : str, optional
@@ -96,18 +129,45 @@ def plot_solution(t, y, τ, history=None, title=None, save_path=None):
     """
     plt.figure(figsize=(10, 6))
     
+    # Convert arrays to numpy if they're lists
+    if isinstance(t, list):
+        t = np.array(t)
+    if isinstance(y, list):
+        y = np.array(y)
+    
+    # Ensure y has the right shape for plotting
+    if y.ndim > 1 and y.shape[1] == 1:
+        y = y.flatten()
+    
     # Plot solution
     plt.plot(t, y, 'b-', label='Solution u(t)')
     
     # Plot history if provided
     if history is not None:
-        t_hist = np.linspace(-τ, 0, 100)
-        y_hist = np.vstack([history(ti) for ti in t_hist])
-        plt.plot(t_hist, y_hist, 'r--', label='History h(t)')
+        if callable(history):
+            # If history is a function, sample it
+            t_hist = np.linspace(-τ, 0, 100)
+            try:
+                y_hist = np.vstack([history(ti) for ti in t_hist])
+                plt.plot(t_hist, y_hist, 'r--', label='History h(t)')
+            except Exception as e:
+                print(f"Could not plot history function: {e}")
+        elif isinstance(history, dict) and 'type' in history:
+            # If history is our serialized format
+            if history['type'] == 'history' and 't' in history and 'y' in history:
+                t_hist = history['t']
+                y_hist = history['y']
+                plt.plot(t_hist, y_hist, 'r--', label='History h(t)')
+            elif history['type'] == 'neutral_history' and 't' in history and 'y' in history:
+                t_hist = history['t']
+                y_hist = history['y']
+                plt.plot(t_hist, y_hist, 'r--', label='History h(t)')
     
+    # Add vertical line at t=0 to separate history and solution
     plt.axvline(x=0, color='k', linestyle='--', alpha=0.3)
     plt.grid(True, alpha=0.3)
     
+    # Add title
     if title:
         plt.title(title)
     else:
@@ -122,7 +182,9 @@ def plot_solution(t, y, τ, history=None, title=None, save_path=None):
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path, dpi=300, bbox_inches='tight')
     
-    plt.show()
+    # Close the figure to prevent too many plots being shown
+    # This is important for batch processing
+    plt.close()
 
 def create_train_test_split(data, test_ratio=0.2, τ_split=None):
     """
