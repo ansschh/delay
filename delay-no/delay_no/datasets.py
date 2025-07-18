@@ -224,8 +224,14 @@ def create_data_module(variant, data_config):
             for f in ["mackey_glass", "delayed_logistic", "neutral_dde", "reaction_diffusion"]
         ]
     else:
-        train_path = os.path.join(data_dir, "combined", f"{family}_train.pkl")
-        test_path = os.path.join(data_dir, "combined", f"{family}_test.pkl")
+        train_path = os.path.join(data_dir, family, f"{family}.pkl")
+        test_path = os.path.join(data_dir, family, f"{family}.pkl")
+        
+        # Fallback to combined directory if not found in individual directories
+        if not os.path.exists(train_path):
+            train_path = os.path.join(data_dir, "combined", f"{family}_train.pkl")
+            test_path = os.path.join(data_dir, "combined", f"{family}_test.pkl")
+            
         train_paths = [train_path]
         test_paths = [test_path]
     
@@ -275,3 +281,25 @@ def create_data_module(variant, data_config):
     ) if test_dataset else None
     
     return train_loader, test_loader
+
+def create_dataloaders(model_config, data_config):
+    """Function to create dataloaders for training and testing
+    
+    This is the function imported by train.py and evaluate.py
+    
+    Parameters:
+    -----------
+    model_config : dict
+        Model configuration with variant information
+    data_config : dict
+        Data configuration with dataset information
+        
+    Returns:
+    --------
+    tuple: (train_loader, test_loader)
+    """
+    # Extract model variant from config
+    variant = model_config.get("variant", "stacked")
+    
+    # Call the underlying implementation
+    return create_data_module(variant, data_config)

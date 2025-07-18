@@ -1,3 +1,5 @@
 # Configuration for Mackey-Glass dataset
 family: mackey_glass
-path: "../../data"  # Relative path to datasets from working directory
+data_dir: "../../data"  # Path to data directory containing datasets
+batch_size: 32
+num_workers: 4
