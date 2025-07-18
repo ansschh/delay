@@ -1,5 +1,5 @@
 # Configuration for Mackey-Glass dataset
 family: mackey_glass
-data_dir: "../../data"  # Path to data directory containing datasets
+data_dir: "/workspace/delay/data"  # Path to data directory containing datasets
 batch_size: 32
 num_workers: 4
