@@ -18,35 +18,76 @@ class SpectralConvND(nn.Module):
 
     def compl_weight(self):
         # W = P @ (A + iB)
-        w = torch.einsum("or, r...i -> o...i", self.proj,
-                         self.coeff_real + 1j * self.coeff_imag)
+        # Create complex weight with explicit casting to complex
+        complex_coeff = torch.complex(self.coeff_real, self.coeff_imag)
+        # Ensure projection is properly handled
+        proj = self.proj.to(dtype=torch.float32)
+        # Use einsum with proper complex tensor
+        w = torch.einsum("or, r...i -> o...i", proj, complex_coeff)
         return w
 
     def forward(self, x):
-        # x: (B,C,H1,…,Hn)
-        # Convert range to tuple for dim parameter
-        x_ft = torch.fft.rfftn(x, dim=tuple(range(-self.n_dims, 0)))
-        W = self.compl_weight()                    # (O, k1,…,kn, I)
-        
-        # Apply convolution in Fourier space
-        # Note: need to handle each mode separately
-        out_ft = torch.zeros(x_ft.shape[:-self.n_dims] + (self.out_ch,) + 
-                             x_ft.shape[-self.n_dims:], 
-                             dtype=torch.cfloat, device=x.device)
-        
-        # For simplicity, handling 1D and 2D cases explicitly
-        if self.n_dims == 1:
-            out_ft[..., :self.n_modes[0]] = torch.einsum(
-                "bi, oi -> bo", x_ft[..., :self.n_modes[0]], W)
-        elif self.n_dims == 2:
-            for i in range(min(self.n_modes[0], x_ft.shape[-2])):
-                for j in range(min(self.n_modes[1], x_ft.shape[-1])):
-                    out_ft[..., i, j] = torch.einsum(
-                        "bi, oi -> bo", x_ft[..., i, j], W[..., i, j])
-        else:
-            # General N-dimensional case would require more complex indexing
-            raise NotImplementedError("Only 1D and 2D spectral convolutions are implemented")
+        try:
+            # Debug input shape
+            if not hasattr(self, '_printed_debug') or not self._printed_debug:
+                print(f"[SpectralConvND] Input shape: {x.shape}, dtype: {x.dtype}")
+                self._printed_debug = True
             
-        # Convert range to tuple for dim parameter
-        out = torch.fft.irfftn(out_ft, s=x.shape[-self.n_dims:], dim=tuple(range(-self.n_dims, 0)))
-        return out
+            # x: (B,C,H1,…,Hn)
+            # Convert range to tuple for dim parameter
+            x_ft = torch.fft.rfftn(x, dim=tuple(range(-self.n_dims, 0)))
+            
+            # Get complex weights
+            W = self.compl_weight()  # (O, k1,…,kn, I)
+            
+            if not hasattr(self, '_printed_weights') or not self._printed_weights:
+                print(f"[SpectralConvND] Weight shape: {W.shape}, dtype: {W.dtype}")
+                self._printed_weights = True
+            
+            # Apply convolution in Fourier space
+            # Note: need to handle each mode separately
+            out_ft = torch.zeros(x_ft.shape[:-self.n_dims] + (self.out_ch,) + 
+                                x_ft.shape[-self.n_dims:], 
+                                dtype=torch.complex64, device=x.device)
+            
+            # For simplicity, handling 1D and 2D cases explicitly
+            if self.n_dims == 1:
+                # Ensure compatible types
+                x_ft_slice = x_ft[..., :self.n_modes[0]]
+                out_ft[..., :self.n_modes[0]] = torch.einsum(
+                    "bi, oi -> bo", x_ft_slice, W)
+            elif self.n_dims == 2:
+                for i in range(min(self.n_modes[0], x_ft.shape[-2])):
+                    for j in range(min(self.n_modes[1], x_ft.shape[-1])):
+                        # Ensure compatible types
+                        x_ft_slice = x_ft[..., i, j]
+                        w_slice = W[..., i, j]
+                        
+                        # Debug shape and dtype on first iteration
+                        if i == 0 and j == 0 and (not hasattr(self, '_printed_slice_debug') or not self._printed_slice_debug):
+                            print(f"[SpectralConvND] x_ft_slice: {x_ft_slice.shape}, {x_ft_slice.dtype}")
+                            print(f"[SpectralConvND] w_slice: {w_slice.shape}, {w_slice.dtype}")
+                            self._printed_slice_debug = True
+                            
+                        out_ft[..., i, j] = torch.einsum(
+                            "bi, oi -> bo", x_ft_slice, w_slice)
+            else:
+                # General N-dimensional case would require more complex indexing
+                raise NotImplementedError("Only 1D and 2D spectral convolutions are implemented")
+                
+            # Convert back from Fourier space
+            out = torch.fft.irfftn(out_ft, s=x.shape[-self.n_dims:], dim=tuple(range(-self.n_dims, 0)))
+            
+            if not hasattr(self, '_printed_out_debug') or not self._printed_out_debug:
+                print(f"[SpectralConvND] Output shape: {out.shape}, dtype: {out.dtype}")
+                self._printed_out_debug = True
+                
+            return out
+        except Exception as e:
+            print(f"Error in SpectralConvND.forward: {str(e)}")
+            print(f"Input shape: {x.shape if 'x' in locals() else 'N/A'}, ")
+            if 'W' in locals():
+                print(f"Weight shape: {W.shape}, dtype: {W.dtype}")
+            if 'x_ft' in locals():
+                print(f"FFT shape: {x_ft.shape}, dtype: {x_ft.dtype}")
+            raise
