@@ -6,6 +6,9 @@ rootDir=$(dirname $(realpath $0))
 dataDir="${rootDir}/data"
 failed_families=("neutral_dde" "reaction_diffusion")
 
+# Set Python path to include project root directory
+export PYTHONPATH="$rootDir:$PYTHONPATH"
+
 # Print start message
 timestamp=$(date)
 echo "Starting DDE dataset generation for failed families - $timestamp"

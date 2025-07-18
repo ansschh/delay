@@ -6,6 +6,9 @@ $rootDir = $PSScriptRoot
 $dataDir = Join-Path $rootDir "data"
 $failed_families = @("neutral_dde", "reaction_diffusion")
 
+# Set Python path to include project root directory
+$env:PYTHONPATH = "$rootDir;$env:PYTHONPATH"
+
 # Print start message
 $timestamp = Get-Date -Format "ddd MMM dd HH:mm:ss yyyy"
 Write-Host "Starting DDE dataset generation for failed families - $timestamp"
