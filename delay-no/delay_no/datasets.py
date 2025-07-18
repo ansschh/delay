@@ -10,32 +10,55 @@ def load_dde_dataset(path):
     with open(path, 'rb') as f:
         return pickle.load(f)
 
-def interpolate_hist(hist, s_new, kind="linear"):
-    """
-    Interpolate history function to new grid points
+def interpolate_hist(hist, s_new, kind='linear'):
+    """Interpolate history to new timepoints
     
     Parameters:
     -----------
-    hist : array-like
-        History array, either as values or callable function
-    s_new : array-like
-        New grid points for interpolation
+    hist : array or callable
+        History values or function
+    s_new : array
+        New time points
     kind : str
-        Interpolation method ('linear', 'cubic', etc.)
-    
+        Interpolation method
+        
     Returns:
     --------
-    array-like: Interpolated history values on new grid
+    array : Interpolated history
     """
     if callable(hist):
         # If history is a function, simply evaluate at the new points
         return np.array([hist(s) for s in s_new])
     else:
-        # Assume hist is an array with corresponding time points
-        # This is a simplification - in practice, we'd need to know the original s values
-        hist_s = np.linspace(-1, 0, len(hist))  # Normalized time points
-        f = interpolate.interp1d(hist_s, hist, axis=0, kind=kind, fill_value="extrapolate")
-        return f(s_new)
+        # Handle array-like history data
+        try:
+            # Convert hist to numpy array if it isn't already
+            hist_array = np.asarray(hist)
+            
+            # Check if hist is 1D or multi-dimensional
+            if hist_array.ndim == 1:
+                # Simple 1D case
+                hist_s = np.linspace(-1, 0, len(hist_array))  # Normalized time points
+                f = interpolate.interp1d(hist_s, hist_array, kind=kind, fill_value="extrapolate")
+                return f(s_new)
+            else:
+                # For multi-dimensional history (e.g., with spatial dimensions)
+                # We assume the first dimension is time
+                hist_s = np.linspace(-1, 0, hist_array.shape[0])  # Normalized time points
+                f = interpolate.interp1d(hist_s, hist_array, axis=0, kind=kind, fill_value="extrapolate")
+                return f(s_new)
+                
+        except Exception as e:
+            # Add more debug information to help diagnose the error
+            hist_shape = getattr(hist, 'shape', 'unknown shape')
+            s_new_shape = getattr(s_new, 'shape', 'unknown shape')
+            hist_type = type(hist)
+            s_type = type(s_new)
+            
+            err_msg = (f"Interpolation failed with error: {str(e)}\n"
+                     f"hist type: {hist_type}, shape: {hist_shape}\n"
+                     f"s_new type: {s_type}, shape: {s_new_shape}")
+            raise ValueError(err_msg) from e
 
 class DDEChunk(Dataset):
     """Base dataset class for DDE samples"""
