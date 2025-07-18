@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from scipy import interpolate
+from typing import List, Dict, Any
 
 def pad_tensor(x, pad_size, dim=-1, mode='constant', value=0):
     """
@@ -115,6 +116,20 @@ def to_torch(array, device=None):
         return array.to(device) if device is not None else array
     tensor = torch.from_numpy(array)
     return tensor.to(device) if device is not None else tensor
+
+def pad_collate(batch: List[Dict[str, Any]]):
+    """Custom collate_fn that stacks fixed-size tensors.
+
+    Assumes each item in the batch is a dict with keys:
+        hist:  (nx, S) tensor
+        y:     (nx, T_out) tensor (already padded/truncated in Dataset)
+        tau:   (1,) tensor
+    """
+    hist = torch.stack([item["hist"] for item in batch], dim=0)   # (B,nx,S)
+    y    = torch.stack([item["y"] for item in batch], dim=0)      # (B,nx,T_out)
+    tau  = torch.stack([item["tau"] for item in batch], dim=0)    # (B,1)
+    return {"hist": hist, "y": y, "tau": tau}
+
 
 class Timer:
     """Simple timer context manager for profiling"""

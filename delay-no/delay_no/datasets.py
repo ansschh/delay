@@ -3,6 +3,7 @@ import numpy as np
 import pickle
 from scipy import interpolate
 from torch.utils.data import Dataset, DataLoader
+from delay_no.utils import pad_collate
 import os
 
 def load_dde_dataset(path):
@@ -97,9 +98,18 @@ class StackedHistoryDataset(DDEChunk):
     """Dataset for Stacked-history FNO approach"""
     def __init__(self, data_path, S=16, horizon=None, nx=None):
         super().__init__(data_path)
-        self.S = S  # Number of history points
-        self.horizon = horizon  # Prediction horizon
-        self.nx = nx  # Spatial dimension
+        self.S = S
+        self.horizon = horizon
+        self.nx = nx
+        # Validate mandatory configs
+        if self.horizon is None or self.nx is None:
+            raise ValueError("StackedHistoryDataset requires explicit horizon and nx in the data config.")
+        # Derive dt and T_out (number of prediction steps) from the first sample
+        _, _, t0, y0 = self.samples[0]
+        self.dt = t0[1] - t0[0] if len(t0) > 1 else 1.0
+        self.T_out = int(round(self.horizon / self.dt))
+        if self.T_out <= 0:
+            raise ValueError(f"Invalid horizon {self.horizon} with dt {self.dt}")
         
     def __getitem__(self, idx):
         hist, tau, t, y = self.samples[idx]
@@ -125,17 +135,30 @@ class StackedHistoryDataset(DDEChunk):
             # Reshape to ensure proper dimensionality
             hist_grid = interpolate_hist(hist, s_axis)
             
-        # Reshape history grid if needed
-        if len(hist_grid.shape) == 1:
+        # Ensure hist_grid shape (S,nx)
+        if hist_grid.ndim == 1:
             hist_grid = hist_grid.reshape(self.S, 1)
+        if hist_grid.shape[1] == 1 and self.nx > 1:
+            # replicate single channel across nx
+            hist_grid = np.repeat(hist_grid, self.nx, axis=1)
+        elif hist_grid.shape[1] != self.nx:
+            raise ValueError(f"hist_grid channels {hist_grid.shape[1]} != nx {self.nx}")
             
-        # Get target: next window
-        target_mask = t <= (t[0] + self.horizon)
+        # Build fixed-length target window (nx, T_out)
+        end_time = t[0] + self.horizon
+        target_mask = t <= end_time
         target = y[target_mask]
+        # truncate / pad to T_out
+        if target.shape[0] > self.T_out:
+            target = target[:self.T_out]
+        elif target.shape[0] < self.T_out:
+            pad_len = self.T_out - target.shape[0]
+            pad_block = np.zeros((pad_len, self.nx), dtype=target.dtype)
+            target = np.concatenate([target, pad_block], axis=0)
         
-        # Convert to tensors
-        hist_tensor = torch.tensor(hist_grid, dtype=torch.float32)
-        target_tensor = torch.tensor(target, dtype=torch.float32)
+        # Convert to tensors (shape nx,S and nx,T_out)
+        hist_tensor = torch.tensor(hist_grid.T, dtype=torch.float32)  # (nx,S)
+        target_tensor = torch.tensor(target.T, dtype=torch.float32)   # (nx,T_out)
         tau_tensor = torch.tensor([tau], dtype=torch.float32)
         
         return {
@@ -302,11 +325,12 @@ def create_data_module(variant, data_config):
         
     # Create dataloaders
     train_loader = DataLoader(
-        train_dataset, 
+        train_dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True
+        pin_memory=True,
+        collate_fn=pad_collate
     ) if train_dataset else None
     
     test_loader = DataLoader(
@@ -314,7 +338,8 @@ def create_data_module(variant, data_config):
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True
+        pin_memory=True,
+        collate_fn=pad_collate
     ) if test_dataset else None
     
     return train_loader, test_loader
