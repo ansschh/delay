@@ -1,6 +1,8 @@
 # Configuration for Mackey-Glass dataset
 family: mackey_glass
-data_dir: "d:/dno/data"  # Path to local data directory
+# Path to data directory matching the pattern /workspace/delay/data/mackey_glass/mackey_glass.pkl
+# Will be overridden by DELAY_DATA_DIR environment variable if set
+data_dir: ${oc.env:DELAY_DATA_DIR,/workspace/delay/data}
 batch_size: 32
 S: 16          # number of history grid points
 horizon: 50.0  # prediction horizon in dataset time units
