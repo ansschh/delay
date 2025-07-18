@@ -29,6 +29,20 @@ def interpolate_hist(hist, s_new, kind='linear'):
     if callable(hist):
         # If history is a function, simply evaluate at the new points
         return np.array([hist(s) for s in s_new])
+    elif isinstance(hist, dict):
+        # Handle dict-based history where hist = {'t': [...], 'y': [...]} as seen in dataset files
+        hist_t = np.asarray(hist.get('t'))
+        hist_y = np.asarray(hist.get('y'))
+        if hist_t is None or hist_y is None:
+            raise ValueError("History dict must contain 't' and 'y' keys")
+        if hist_t.ndim != 1:
+            raise ValueError(f"hist['t'] must be 1D, got shape {hist_t.shape}")
+        if hist_y.shape[0] != hist_t.shape[0]:
+            raise ValueError(
+                f"hist['t'] length {hist_t.shape[0]} does not match hist['y'] first dimension {hist_y.shape[0]}")
+        # interpolate along time axis (first axis)
+        f = interpolate.interp1d(hist_t, hist_y, axis=0, kind=kind, fill_value="extrapolate")
+        return f(s_new)
     else:
         # Handle array-like history data
         try:
