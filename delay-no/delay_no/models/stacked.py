@@ -28,14 +28,20 @@ class StackedFNO(pl.LightningModule):
         # We add 2 for the coordinate channels (s, x)
         self.lift = ChannelMLP(in_ch + 2, hidden, hidden)  # +2 for (s,x) coords
         
-        # FNO blocks
-        self.fno_blocks = nn.ModuleList([
-            nn.Sequential(
-                SpectralConvND(hidden, hidden, n_modes),
+        # FNO blocks with explicit dtype handling
+        self.fno_blocks = nn.ModuleList()
+        for _ in range(L):
+            # Wrap spectral conv in a custom block to ensure proper dtype handling
+            spectral_conv = SpectralConvND(hidden, hidden, n_modes)
+            
+            # Create sequential block with explicit type handling
+            fno_block = nn.Sequential(
+                spectral_conv,
                 nn.Conv2d(hidden, hidden, 1),  # point-wise W
                 nn.GELU()
-            ) for _ in range(L)
-        ])
+            )
+            
+            self.fno_blocks.append(fno_block)
         
         self.proj = ChannelMLP(hidden, hidden, out_ch)
 

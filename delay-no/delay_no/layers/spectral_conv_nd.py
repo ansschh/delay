@@ -17,14 +17,33 @@ class SpectralConvND(nn.Module):
         self.proj = nn.Parameter(torch.randn(out_ch, r))
 
     def compl_weight(self):
-        # W = P @ (A + iB)
-        # Create complex weight with explicit casting to complex
-        complex_coeff = torch.complex(self.coeff_real, self.coeff_imag)
-        # Ensure projection is properly handled
-        proj = self.proj.to(dtype=torch.float32)
-        # Use einsum with proper complex tensor
-        w = torch.einsum("or, r...i -> o...i", proj, complex_coeff)
-        return w
+        try:
+            # Create complex weight with explicit casting to complex
+            complex_coeff = torch.complex(self.coeff_real, self.coeff_imag)
+            
+            # Complex einsum needs special handling - convert projection to complex type
+            proj_complex = torch.complex(
+                self.proj,  # Real part
+                torch.zeros_like(self.proj)  # Imaginary part (zero)
+            )
+            
+            # Debug shape and dtype info
+            if not hasattr(self, '_printed_weight_debug'):
+                print(f"[compl_weight] proj shape: {proj_complex.shape}, dtype: {proj_complex.dtype}")
+                print(f"[compl_weight] complex_coeff shape: {complex_coeff.shape}, dtype: {complex_coeff.dtype}")
+                self._printed_weight_debug = True
+            
+            # Use einsum with both inputs as complex tensors
+            w = torch.einsum("or, r...i -> o...i", proj_complex, complex_coeff)
+            return w
+            
+        except Exception as e:
+            print(f"Error in compl_weight: {str(e)}")
+            print(f"proj: {self.proj.shape if hasattr(self, 'proj') else 'N/A'}, "
+                  f"dtype: {self.proj.dtype if hasattr(self, 'proj') else 'N/A'}")
+            print(f"coeff_real: {self.coeff_real.shape if hasattr(self, 'coeff_real') else 'N/A'}, "
+                  f"dtype: {self.coeff_real.dtype if hasattr(self, 'coeff_real') else 'N/A'}")
+            raise
 
     def forward(self, x):
         try:
