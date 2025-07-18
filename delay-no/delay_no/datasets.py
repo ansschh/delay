@@ -295,11 +295,16 @@ def create_data_module(variant, data_config):
         train_paths = [train_path]
         test_paths = [test_path]
     
-    # Create appropriate dataset
-    if variant == "stacked":
+    # Build datasets based on variant
+    if variant == "stacked" or variant == "stacked_history":
         S = data_config.get("S", 16)
-        train_datasets = [StackedHistoryDataset(path, S=S) for path in train_paths if os.path.exists(path)]
-        test_datasets = [StackedHistoryDataset(path, S=S) for path in test_paths if os.path.exists(path)]
+        horizon = data_config.get("horizon", None)
+        nx = data_config.get("nx", None)
+        
+        train_datasets = [StackedHistoryDataset(path, S=S, horizon=horizon, nx=nx) 
+                         for path in train_paths if os.path.exists(path)]
+        test_datasets = [StackedHistoryDataset(path, S=S, horizon=horizon, nx=nx) 
+                        for path in test_paths if os.path.exists(path)]
     elif variant == "steps":
         S = data_config.get("S", 16)
         K = data_config.get("K", 5)
