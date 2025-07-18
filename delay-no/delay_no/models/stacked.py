@@ -23,6 +23,9 @@ class StackedFNO(pl.LightningModule):
         self.weight_decay = weight_decay
         
         # Model components
+        # For now we use nx from the dataset as input channels
+        # Dynamic channel handling - will be adjusted based on actual input
+        # We add 2 for the coordinate channels (s, x)
         self.lift = ChannelMLP(in_ch + 2, hidden, hidden)  # +2 for (s,x) coords
         
         # FNO blocks
@@ -56,11 +59,30 @@ class StackedFNO(pl.LightningModule):
         --------
         torch.Tensor: Predicted next window of shape (B, C, S, X)
         """
+        # Get actual input shape and adapt the model if this is the first forward pass
+        B, C, S, X = hist.shape
+        
+        # Handle channel dimension mismatch by recreating the lift layer if needed
+        # This allows the model to adapt to the actual channel count at runtime
+        if hasattr(self, '_first_forward') and self._first_forward:
+            if C != self.in_ch:
+                # Update in_ch to match actual input
+                self.in_ch = C
+                # Recreate lift layer with correct input channel count
+                self.lift = ChannelMLP(C + 2, self.hidden, self.hidden).to(hist.device)
+                print(f"Adjusted lift layer input channels from {self.in_ch} to {C}")
+            self._first_forward = False
+        else:
+            self._first_forward = True
+        
         # Add coordinate channels
         z = self.add_coords(hist)  # (B, C+2, S, X)
         
-        # Lift to hidden dimension (move channels to last dim for MLP)
-        z = self.lift(z.permute(0, 2, 3, 1))  # (B, S, X, hidden)
+        # Permute to move channels to last dimension for MLP
+        z_perm = z.permute(0, 2, 3, 1)  # (B, S, X, C+2)
+        
+        # Lift to hidden dimension
+        z = self.lift(z_perm)  # (B, S, X, hidden)
         
         # Move channels back to second dim for convolution
         z = z.permute(0, 3, 1, 2)  # (B, hidden, S, X)
