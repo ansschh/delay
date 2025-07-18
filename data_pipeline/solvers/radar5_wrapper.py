@@ -18,8 +18,8 @@ def solve_stiff_dde(eqns, params, τs, history, t_eval):
     τs: list
         List of delay values
     history: dict{'u': callable or tuple}
-        History function that takes time t and returns state at time t
-        For neutral DDEs, this may be a tuple of (hist_func, hist_deriv_func)
+        History function that takes time t and returns state at time t,
+        or a tuple of (history_func, history_prime_func) for neutral DDEs
     t_eval: ndarray
         Times at which to return the solution
     
@@ -31,16 +31,20 @@ def solve_stiff_dde(eqns, params, τs, history, t_eval):
     # Extract the main delay value (assuming single delay for simplicity)
     τ = τs[0]
     
-    # Get the history function - handle both regular history and neutral DDE cases
-    if 'u' in history:
-        if isinstance(history['u'], tuple):
-            # For neutral DDEs, the history is a tuple (hist_func, hist_deriv_func)
-            hist_func = history['u'][0]  # Take the value function, not derivative
-        else:
-            hist_func = history['u']
+    # Get the history function - handle both regular and neutral DDEs
+    hist_item = history['u']
+    
+    # Check if we have a neutral DDE (history returns a tuple of functions)
+    is_neutral = isinstance(hist_item, tuple) and len(hist_item) == 2 and all(callable(f) for f in hist_item)
+    
+    if is_neutral:
+        # For neutral DDEs: hist_func is the first element of the tuple
+        hist_func = hist_item[0]
+        hist_prime_func = hist_item[1]  # Save the derivative function for later use
     else:
-        # Fallback - try direct access if no 'u' key
-        hist_func = history
+        # For regular DDEs
+        hist_func = hist_item
+        hist_prime_func = None
     
     # For stiff systems, we'll use the BDF method
     # We adapt the method of steps approach but with stiff solver
@@ -57,48 +61,39 @@ def solve_stiff_dde(eqns, params, τs, history, t_eval):
     # to better handle the delay
     chunk_size = min(τ, (tf - t0) / 10)  # Either τ or a fraction of the total time
     
-    # Initial condition - handle callable or non-callable hist_func
-    try:
-        if callable(hist_func):
-            y0 = hist_func(0.0)
-        else:
-            # If hist_func is not callable (e.g., a value), use it directly
-            y0 = hist_func
-    except Exception as e:
-        # If there's an error, try a simpler approach
-        print(f"Warning when getting initial condition: {e}")
-        if isinstance(hist_func, (list, tuple, np.ndarray)):
-            if callable(hist_func[0]):
-                y0 = hist_func[0](0.0)
-            else:
-                y0 = hist_func[0]
-        else:
-            # Default to 1.0 as a last resort
-            y0 = 1.0
-    
-    # Ensure y0 is properly formatted for the solver
+    # Initial condition
+    y0 = hist_func(0.0)
     if not isinstance(y0, (list, np.ndarray)):
         y0 = np.array([y0])
+        
+    # Make sure y0 is a flattened array as required by solve_ivp
+    if hasattr(y0, 'flatten'):
+        y0 = y0.flatten()
+    else:
+        y0 = np.array([y0]).flatten()
     
     # Create interpolation function for history
+    # We'll build this as we go
     from scipy.interpolate import interp1d
     
     # Start with history on [-τ, 0]
     t_hist = np.linspace(-τ, 0, max(100, int(τ/0.01)))  # Fine grid for history
     
-    # Get history values, handling any potential errors
     try:
-        if callable(hist_func):
-            y_hist = np.array([hist_func(t) for t in t_hist])
-        else:
-            # If hist_func is not callable, use a constant history
-            y_hist = np.array([y0 for _ in t_hist])
+        y_hist = np.array([hist_func(t) for t in t_hist])
+        
+        # Also prepare derivative history for neutral DDEs
+        if is_neutral:
+            y_prime_hist = np.array([hist_prime_func(t) for t in t_hist])
+            
+            # If y_prime_hist contains scalars, reshape to column vector
+            if y_prime_hist.ndim == 1:
+                y_prime_hist = y_prime_hist.reshape(-1, 1)
     except Exception as e:
-        print(f"Warning when sampling history: {e}")
-        # Default to constant history if there's an error
-        y_hist = np.array([y0 for _ in t_hist])
+        # Handle any errors in evaluating history functions
+        raise ValueError(f"Error evaluating history function: {e}")
     
-    # Ensure y_hist has the right shape
+    # If y_hist contains scalars, reshape to column vector
     if y_hist.ndim == 1:
         y_hist = y_hist.reshape(-1, 1)
     
@@ -111,57 +106,73 @@ def solve_stiff_dde(eqns, params, τs, history, t_eval):
         """Get value at time t from interpolation"""
         # If t is in the past, use history function
         if t <= 0:
-            try:
-                if callable(hist_func):
-                    return hist_func(t)
-                else:
-                    # Return the first history value as an approximation
-                    return y_hist[0]
-            except Exception:
-                # Fallback to interpolation
-                pass
+            return hist_func(t)
         
-        # If t is beyond our computed solution, use the latest value
+        # If t is beyond our computed solution, warn and use the latest value
         if t > all_t[-1]:
+            warnings.warn(f"Time {t} is beyond computed solution at {all_t[-1]}")
             return all_y[-1]
         
         # Otherwise use interpolation
-        try:
-            interp = interp1d(all_t, all_y, axis=0, bounds_error=False, fill_value="extrapolate")
+        interp = interp1d(all_t, all_y, axis=0, bounds_error=False, fill_value="extrapolate")
+        return interp(t)
+        
+    # For neutral DDEs, we also need to get the derivative value at delayed time
+    if is_neutral:
+        # Start with derivative history
+        all_y_prime = y_prime_hist
+        
+        def get_delayed_derivative(t):
+            """Get derivative value at time t from interpolation"""
+            # If t is in the past, use history derivative function
+            if t <= 0:
+                return hist_prime_func(t)
+                
+            # If t is beyond our computed solution, use the latest value
+            if t > all_t[-1]:
+                warnings.warn(f"Time {t} is beyond computed solution at {all_t[-1]}")
+                return all_y_prime[-1]
+                
+            # Otherwise use interpolation
+            interp = interp1d(all_t, all_y_prime, axis=0, bounds_error=False, fill_value="extrapolate")
             return interp(t)
-        except Exception as e:
-            print(f"Interpolation error: {e}")
-            # Return the latest computed value as fallback
-            return all_y[-1]
     
     # Define the ODE function that includes the delay term
     def rhs_with_delay(t, y):
         """RHS function that includes the delay term"""
-        # Make sure y is properly shaped
-        if isinstance(y, np.ndarray) and y.size == 1:
-            y = np.array([y[0]])  # Ensure it's a 1D array with one element
-        
         # Get delayed state
-        try:
-            y_tau = get_delayed_value(t - τ)
-        except Exception as e:
-            print(f"Error getting delayed value: {e}")
-            # Use current value as fallback
-            y_tau = y
+        y_tau = get_delayed_value(t - τ)
+        
+        # For neutral DDEs, also get delayed derivative
+        if is_neutral:
+            y_tau_prime = get_delayed_derivative(t - τ)
+        
+        # Ensure y is properly shaped
+        y_reshaped = y.reshape(-1, 1) if y.ndim == 1 and y.size > 1 else y
         
         # Get derivative from the equations
-        try:
-            if 'u' in eqns and callable(eqns['u']):
-                # If it's a function, call it directly
-                result = eqns['u'](t, y, y_tau, **params)
-                # Ensure the result is properly shaped for the solver
-                if isinstance(result, (int, float)):
-                    result = np.array([result])
-                return result
+        # We'll access the first equation's function (assuming one equation)
+        if callable(eqns['u']):
+            # If it's a function, call it directly
+            if is_neutral:
+                # For neutral DDEs, pass the delayed derivative too
+                result = eqns['u'](t, y_reshaped, y_tau, y_tau_prime, **params)
             else:
-                # Default implementation for simple cases
-                u = y[0] if isinstance(y, (list, np.ndarray)) and len(y) > 0 else y
-                u_tau = y_tau[0] if isinstance(y_tau, (list, np.ndarray)) and len(y_tau) > 0 else y_tau
+                result = eqns['u'](t, y_reshaped, y_tau, **params)
+                
+            # Ensure result is a numpy array with proper shape
+            if not isinstance(result, np.ndarray):
+                result = np.array([result]).flatten()
+            elif result.ndim > 1:
+                result = result.flatten()
+                
+            return result
+        else:
+            # Default simple implementation for common cases
+            # This handles cases like Mackey-Glass, etc.
+            if y.size == 1:  # Single-variable case
+                u = y.item() if isinstance(y, np.ndarray) else y
+                u_tau = y_tau.item() if isinstance(y_tau, np.ndarray) else y_tau
                 
                 # Simple implementation for Mackey-Glass as default
                 beta = params.get('β', params.get('beta', 0.2))
@@ -169,11 +180,11 @@ def solve_stiff_dde(eqns, params, τs, history, t_eval):
                 n = params.get('n', 10)
                 
                 dydt = beta * u_tau/(1 + u_tau**n) - gamma * u
-                return np.array([dydt])
-        except Exception as e:
-            print(f"Error in RHS function: {e}")
-            # Return a small default value as fallback
-            return np.zeros_like(y)
+                return np.array([dydt])  # Return as a numpy array
+            else:
+                # Multi-variable case (e.g., reaction-diffusion)
+                # Just return zeros as a placeholder - this should be overridden by callable eqns
+                return np.zeros_like(y)
     
     # Integrate in chunks to better handle the delay term
     current_t = t0
@@ -181,39 +192,74 @@ def solve_stiff_dde(eqns, params, τs, history, t_eval):
         # Determine end of this chunk
         chunk_end = min(current_t + chunk_size, tf)
         
-        # Integrate over this chunk
-        sol = solve_ivp(
-            rhs_with_delay,
-            (current_t, chunk_end),
-            y0.flatten(),  # Ensure 1D array for solve_ivp
-            method='BDF',  # Backward differentiation formula for stiff problems
-            rtol=1e-6,
-            atol=1e-8,
-            dense_output=True
-        )
-        
-        # Store solution points
-        t_points.append(sol.t)
-        y_points.append(sol.y.T)
-        
-        # Update the interpolation data
-        all_t = np.append(all_t, sol.t)
-        if sol.y.ndim == 1:
-            new_y = sol.y.reshape(-1, 1)
-        else:
-            new_y = sol.y.T
-        all_y = np.vstack([all_y, new_y])
-        
-        # Update current time and initial condition for next chunk
-        current_t = chunk_end
-        y0 = sol.y[:, -1]  # Last solution point
+        try:
+            # Integrate over this chunk
+            sol = solve_ivp(
+                rhs_with_delay,
+                (current_t, chunk_end),
+                y0,  # y0 is already flattened above
+                method='BDF',  # Backward differentiation formula for stiff problems
+                rtol=1e-6,
+                atol=1e-8,
+                dense_output=True
+            )
+            
+            # Store solution points
+            t_points.append(sol.t)
+            y_points.append(sol.y.T if sol.y.ndim > 1 else sol.y.reshape(-1, 1))
+            
+            # Update the interpolation data for state
+            all_t = np.append(all_t, sol.t)
+            if sol.y.ndim == 1:
+                new_y = sol.y.reshape(-1, 1)
+            else:
+                new_y = sol.y.T
+            all_y = np.vstack([all_y, new_y])
+            
+            # For neutral DDEs, we also need to update derivative history
+            if is_neutral:
+                # Estimate derivatives from the solution using finite differences
+                if len(sol.t) > 1:
+                    dt = np.diff(sol.t)
+                    dy = np.diff(sol.y, axis=1)
+                    derivatives = dy / dt
+                    
+                    # Add estimated derivatives at new time points (except last point)
+                    new_t_prime = sol.t[:-1]
+                    if derivatives.ndim == 1:
+                        new_y_prime = derivatives.reshape(-1, 1)
+                    else:
+                        new_y_prime = derivatives.T
+                    
+                    # For the last point, use forward extrapolation
+                    last_deriv = new_y_prime[-1] if new_y_prime.shape[0] > 0 else np.zeros((1, new_y.shape[1]))
+                    last_t = sol.t[-1]
+                    
+                    # Append to all_y_prime
+                    all_t_prime = np.append(all_t[:-1], new_t_prime)
+                    all_t_prime = np.append(all_t_prime, last_t)
+                    all_y_prime = np.vstack([all_y_prime, new_y_prime, last_deriv])
+            
+            # Update current time and initial condition for next chunk
+            current_t = chunk_end
+            y0 = sol.y[:, -1] if sol.y.ndim > 1 else np.array([sol.y[-1]])  # Last solution point
+            
+        except Exception as e:
+            # If integration fails, provide helpful error message
+            raise ValueError(f"Integration failed at t={current_t}: {e}")
     
     # Combine all solution points
-    t_combined = np.concatenate(t_points)
-    y_combined = np.vstack(y_points)
+    t_combined = np.concatenate(t_points) if len(t_points) > 0 else np.array([t0])
     
-    # Return solution at requested evaluation points using interpolation
-    sol_interp = interp1d(t_combined, y_combined, axis=0, bounds_error=False, fill_value="extrapolate")
-    y_eval = sol_interp(t_eval)
+    if len(y_points) > 0:
+        # Stack y_points, ensuring consistent shape
+        y_combined = np.vstack(y_points)
+        
+        # Return solution at requested evaluation points using interpolation
+        sol_interp = interp1d(t_combined, y_combined, axis=0, bounds_error=False, fill_value="extrapolate")
+        y_eval = sol_interp(t_eval)
+    else:
+        # If no solutions were computed (e.g. immediate error), return empty result
+        y_eval = np.zeros((len(t_eval), y0.size))
     
     return t_eval, y_eval

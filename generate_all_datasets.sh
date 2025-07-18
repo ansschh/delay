@@ -27,26 +27,33 @@ HIST_TYPE="cubic_spline" # History type
 generate_dataset() {
     family=$1
     output_subdir=$2
+    dataset_file="$OUTPUT_DIR/$output_subdir/$family.pkl"
     
-    echo "Generating dataset for $family (10K samples)..."
-    
-    # Run the Python script
-    python data_pipeline/generate_dataset.py \
-        --families "$family" \
-        --N $N \
-        --tau_min $TAU_MIN \
-        --tau_max $TAU_MAX \
-        --T $T \
-        --dt $DT \
-        --history_type $HIST_TYPE \
-        --output_dir "$OUTPUT_DIR/$output_subdir" \
-        --plot_examples
-    
-    # Check if generation was successful
-    if [ $? -eq 0 ]; then
-        echo "✓ Successfully generated dataset for $family"
+    # Check if dataset already exists
+    if [ -f "$dataset_file" ]; then
+        echo "Dataset for $family already exists at $dataset_file"
+        echo "Skipping generation for this family."
     else
-        echo "✗ Failed to generate dataset for $family"
+        echo "Generating dataset for $family (10K samples)..."
+        
+        # Run the Python script
+        python data_pipeline/generate_dataset.py \
+            --families "$family" \
+            --N $N \
+            --tau_min $TAU_MIN \
+            --tau_max $TAU_MAX \
+            --T $T \
+            --dt $DT \
+            --history_type $HIST_TYPE \
+            --output_dir "$OUTPUT_DIR/$output_subdir" \
+            --plot_examples
+        
+        # Check if generation was successful
+        if [ $? -eq 0 ]; then
+            echo "✓ Successfully generated dataset for $family"
+        else
+            echo "✗ Failed to generate dataset for $family"
+        fi
     fi
     
     echo "----------------------------------------"
@@ -66,19 +73,55 @@ echo "4/4: Generating Reaction-Diffusion datasets"
 generate_dataset "reaction_diffusion" "reaction_diffusion"
 
 # Generate a combined dataset with train/test split based on delay values
-echo "Generating combined dataset with train/test split (hold out τ ∈ [2.0, 3.0] for testing)..."
-python data_pipeline/generate_dataset.py \
-    --families "mackey_glass" "delayed_logistic" "neutral_dde" "reaction_diffusion" \
-    --N $N \
-    --tau_min $TAU_MIN \
-    --tau_max $TAU_MAX \
-    --T $T \
-    --dt $DT \
-    --history_type $HIST_TYPE \
-    --output_dir "$OUTPUT_DIR/combined" \
-    --tau_split_min 2.0 \
-    --tau_split_max 3.0 \
-    --plot_examples
+echo "Checking for combined datasets with train/test split..."
+
+# Function to check if all train/test files exist for a family
+check_combined_dataset() {
+    family=$1
+    train_file="$OUTPUT_DIR/combined/${family}_train.pkl"
+    test_file="$OUTPUT_DIR/combined/${family}_test.pkl"
+    
+    if [ -f "$train_file" ] && [ -f "$test_file" ]; then
+        echo "- ${family}: Train/test datasets already exist"
+        return 0  # Files exist
+    else
+        return 1  # Files don't exist
+    fi
+}
+
+# Create combined directory if it doesn't exist
+mkdir -p "$OUTPUT_DIR/combined"
+
+# Check which families need combined dataset generation
+missing_families=()
+all_families=("mackey_glass" "delayed_logistic" "neutral_dde" "reaction_diffusion")
+
+for family in "${all_families[@]}"; do
+    if ! check_combined_dataset "$family"; then
+        missing_families+=("$family")
+    fi
+done
+
+# Only generate if there are missing families
+if [ ${#missing_families[@]} -gt 0 ]; then
+    echo "Generating combined dataset with train/test split (hold out τ ∈ [2.0, 3.0] for testing)..."
+    echo "Generating for families: ${missing_families[@]}"
+    
+    python data_pipeline/generate_dataset.py \
+        --families ${missing_families[@]} \
+        --N $N \
+        --tau_min $TAU_MIN \
+        --tau_max $TAU_MAX \
+        --T $T \
+        --dt $DT \
+        --history_type $HIST_TYPE \
+        --output_dir "$OUTPUT_DIR/combined" \
+        --tau_split_min 2.0 \
+        --tau_split_max 3.0 \
+        --plot_examples
+else
+    echo "All combined train/test datasets already exist. Skipping combined generation."
+fi
 
 echo "----------------------------------------"
 echo "Dataset generation completed - $(date)"

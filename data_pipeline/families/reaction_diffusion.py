@@ -119,46 +119,7 @@ params = {
     'nx': 20
 }
 
-# Function implementation for stiff solver
-def stiff_rhs(t, y, y_tau, **kwargs):
-    """
-    Right-hand side function for stiff solver that's compatible with solve_stiff_dde
-    Implements the spatial discretization and handles the vector form correctly
-    """
-    D = kwargs.get('D', 0.01)
-    a = kwargs.get('a', 1.0)
-    b = kwargs.get('b', 1.0)
-    nx = kwargs.get('nx', 20)
-    
-    # Ensure y and y_tau are correctly shaped
-    if isinstance(y, (float, int)) or (isinstance(y, np.ndarray) and y.size == 1):
-        # If we get a scalar, expand to vector form
-        y = np.ones(nx) * y
-    if isinstance(y_tau, (float, int)) or (isinstance(y_tau, np.ndarray) and y_tau.size == 1):
-        y_tau = np.ones(nx) * y_tau
-    
-    # Handle spatial discretization
-    dx = 1.0 / nx
-    
-    # Use a simple finite difference approximation for the Laplacian
-    # For 1D: ∇²u ≈ (u[i+1] - 2*u[i] + u[i-1])/dx²
-    diffusion = np.zeros_like(y)
-    
-    # Interior points
-    for i in range(1, nx-1):
-        diffusion[i] = (y[i+1] - 2*y[i] + y[i-1]) / (dx**2)
-    
-    # Boundary points (periodic)
-    diffusion[0] = (y[1] - 2*y[0] + y[nx-1]) / (dx**2)
-    diffusion[nx-1] = (y[0] - 2*y[nx-1] + y[nx-2]) / (dx**2)
-    
-    # Compute the reaction terms
-    reaction = a * y + b * y_tau
-    
-    # Return the complete right-hand side
-    return D * diffusion + reaction
-
-# Update the equation structure to use our custom function
+# Equation string for radar5 solver (simplified, actual implementation would need vector form)
 eqns = {
-    'u': stiff_rhs
+    'u': 'D*laplacian(u) + a*u + b*delay(u, tau)'
 }

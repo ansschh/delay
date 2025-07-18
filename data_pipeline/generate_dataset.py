@@ -6,24 +6,16 @@ import argparse
 from pathlib import Path
 from tqdm import tqdm
 
-# Handle imports for both module and script usage
-import sys
-import os
-
-# Add parent directory to path if not already there
-if os.path.dirname(os.path.dirname(os.path.abspath(__file__))) not in sys.path:
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-# Now import everything using absolute imports
-from data_pipeline.solvers.method_of_steps import solve_dde
-from data_pipeline.solvers.radar5_wrapper import solve_stiff_dde
+# Import solvers
+from solvers.method_of_steps import solve_dde
+from solvers.radar5_wrapper import solve_stiff_dde
 
 # Import DDE families
-from data_pipeline.families import mackey_glass, delayed_logistic, neutral_dde, reaction_diffusion
+from families import mackey_glass, delayed_logistic, neutral_dde, reaction_diffusion
 
 # Import utility functions
-from data_pipeline.utils.io import save_dataset, plot_solution, create_train_test_split
-from data_pipeline.utils.history_generators import cubic_spline_history, fourier_history, filtered_brownian_history
+from utils.io import save_dataset, plot_solution, create_train_test_split
+from utils.history_generators import cubic_spline_history, fourier_history, filtered_brownian_history
 
 def make_family_dataset(family, N=10000, τ_range=(0.5, 5.0), T=50.0, dt=0.1, 
                         history_type="cubic_spline", output_dir="data"):
