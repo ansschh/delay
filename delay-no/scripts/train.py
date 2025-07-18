@@ -5,14 +5,14 @@ import torch
 import hydra
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
-from pytorch_lightning.loggers import WandbLogger
-from omegaconf import DictConfig
+from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
+from omegaconf import DictConfig, OmegaConf
 import logging
 
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from delay_no.datasets import create_dataloaders
+from delay_no.data_module import DelayDataModule
 from delay_no.models.stacked import StackedFNO
 from delay_no.models.steps import StepsLit
 from delay_no.models.kernel import KernelLit
@@ -90,8 +90,8 @@ def train(config: DictConfig):
     run_dir = os.getcwd()
     logger.info(f"Run directory: {run_dir}")
     
-    # Setup dataloaders
-    train_dl, val_dl = create_dataloaders(
+    # Setup data module
+    data_module = DelayDataModule(
         model_config=config.model,
         data_config=config.data
     )
@@ -140,7 +140,7 @@ def train(config: DictConfig):
     )
     
     # Train model
-    trainer.fit(model, train_dl, val_dl)
+    trainer.fit(model, data_module)
     
     # Save final checkpoint
     trainer.save_checkpoint(os.path.join(run_dir, "checkpoints", "final.ckpt"))
