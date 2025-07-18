@@ -1,0 +1,3 @@
+# Configuration for Mackey-Glass dataset
+family: mackey_glass
+path: "../../data"  # Relative path to datasets from working directory

@@ -1,0 +1,9 @@
+# Configuration for Method-of-steps operator (Variant B)
+name: steps
+hist_dim: 64      # History encoding dimension
+tau_dim: 16       # Delay parameter embedding dimension
+out_len: 32       # Output sequence length
+S: 16             # History points (sequence length)
+n_modes: [8]      # Number of Fourier modes for 1D encoder
+K: 5              # Number of rollout steps
+spectral_penalty: 0.1  # Penalty for spectral radius > 1

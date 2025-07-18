@@ -1,0 +1,7 @@
+# Configuration for Memory-kernel integral (Variant C)
+name: kernel
+in_ch: 1          # Input channels
+out_ch: 1         # Output channels
+S: 32             # History points (kernel size)
+hidden_dim: 64    # Hidden dimension
+n_spatial_modes: null  # Set to [8, 8] for 2D spatial problems
