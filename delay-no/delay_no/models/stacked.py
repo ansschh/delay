@@ -79,8 +79,16 @@ class StackedFNO(pl.LightningModule):
     
     def training_step(self, batch, batch_idx):
         """Lightning training step"""
-        hist = batch["hist"].unsqueeze(1) if len(batch["hist"].shape) == 3 else batch["hist"]
-        target = batch["y"].unsqueeze(1) if len(batch["y"].shape) == 3 else batch["y"]
+        # Handle different input shapes - reshape to (B, C, S, X)
+        hist = batch["hist"]
+        if len(hist.shape) == 3:  # (B, nx, S)
+            # Add spatial dimension X=1
+            hist = hist.unsqueeze(-1)  # (B, nx, S, 1)
+        
+        target = batch["y"]
+        if len(target.shape) == 3:  # (B, nx, T)
+            # Add spatial dimension X=1
+            target = target.unsqueeze(-1)  # (B, nx, T, 1)
         
         # Forward pass
         pred = self.forward(hist)
@@ -105,8 +113,16 @@ class StackedFNO(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         """Lightning validation step"""
-        hist = batch["hist"].unsqueeze(1) if len(batch["hist"].shape) == 3 else batch["hist"]
-        target = batch["y"].unsqueeze(1) if len(batch["y"].shape) == 3 else batch["y"]
+        # Handle different input shapes - reshape to (B, C, S, X)
+        hist = batch["hist"]
+        if len(hist.shape) == 3:  # (B, nx, S)
+            # Add spatial dimension X=1
+            hist = hist.unsqueeze(-1)  # (B, nx, S, 1)
+        
+        target = batch["y"]
+        if len(target.shape) == 3:  # (B, nx, T)
+            # Add spatial dimension X=1
+            target = target.unsqueeze(-1)  # (B, nx, T, 1)
         
         # Forward pass
         pred = self.forward(hist)

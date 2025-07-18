@@ -24,7 +24,8 @@ class SpectralConvND(nn.Module):
 
     def forward(self, x):
         # x: (B,C,H1,…,Hn)
-        x_ft = torch.fft.rfftn(x, dim=range(-self.n_dims, 0))
+        # Convert range to tuple for dim parameter
+        x_ft = torch.fft.rfftn(x, dim=tuple(range(-self.n_dims, 0)))
         W = self.compl_weight()                    # (O, k1,…,kn, I)
         
         # Apply convolution in Fourier space
@@ -46,5 +47,6 @@ class SpectralConvND(nn.Module):
             # General N-dimensional case would require more complex indexing
             raise NotImplementedError("Only 1D and 2D spectral convolutions are implemented")
             
-        out = torch.fft.irfftn(out_ft, s=x.shape[-self.n_dims:], dim=range(-self.n_dims, 0))
+        # Convert range to tuple for dim parameter
+        out = torch.fft.irfftn(out_ft, s=x.shape[-self.n_dims:], dim=tuple(range(-self.n_dims, 0)))
         return out
