@@ -92,14 +92,8 @@ def train(config: DictConfig):
     
     # Setup dataloaders
     train_dl, val_dl = create_dataloaders(
-        dataset_path=config.data.path,
-        family=config.data.family,
-        variant=config.model.name,
-        batch_size=config.train.batch_size,
-        num_workers=config.train.num_workers,
-        shuffle=True,
-        grid_size=config.model.S,
-        pin_memory=True
+        model_config=config.model,
+        data_config=config.data
     )
     
     # Initialize model
