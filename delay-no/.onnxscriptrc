@@ -1,0 +1,3 @@
+# Configuration for ONNX Script to suppress deprecation warnings
+[warnings]
+disable=all

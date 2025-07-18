@@ -1,0 +1,31 @@
+model:
+  name: stacked
+  in_ch: 1
+  out_ch: 1
+  S: 16
+  n_modes:
+  - 16
+  hidden_dim: 64
+  n_layers: 4
+data:
+  family: mackey_glass
+  data_dir: d:/dno/data
+  batch_size: 32
+  S: 16
+  horizon: 50.0
+  nx: 1
+  num_workers: 4
+train:
+  seed: 42
+  batch_size: 32
+  max_epochs: 100
+  lr: 0.001
+  weight_decay: 0.0001
+  gradient_clip: 1.0
+  precision: 32
+  num_workers: 4
+logging:
+  use_wandb: false
+  project_name: delay-no
+  entity: null
+  log_steps: 50

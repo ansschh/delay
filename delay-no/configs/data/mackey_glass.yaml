@@ -1,6 +1,6 @@
 # Configuration for Mackey-Glass dataset
 family: mackey_glass
-data_dir: "/workspace/delay/data"  # Path to data directory containing datasets
+data_dir: "d:/dno/data"  # Path to local data directory
 batch_size: 32
 S: 16          # number of history grid points
 horizon: 50.0  # prediction horizon in dataset time units

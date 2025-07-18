@@ -1,0 +1,9 @@
+in_ch: 1
+out_ch: 1
+S: 16
+n_modes:
+- 16
+hidden: 64
+L: 4
+lr: 0.001
+weight_decay: 0.0001

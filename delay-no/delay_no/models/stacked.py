@@ -25,20 +25,42 @@ class StackedFNO(pl.LightningModule):
         # Model components
         # For now we use nx from the dataset as input channels
         # Dynamic channel handling - will be adjusted based on actual input
-        # We add 2 for the coordinate channels (s, x)
-        self.lift = ChannelMLP(in_ch + 2, hidden, hidden)  # +2 for (s,x) coords
+        # We add 1 for the temporal coordinate channel
+        self.lift = ChannelMLP(in_ch + 1, hidden, hidden)  # +1 for temporal coord
         
-        # FNO blocks with explicit dtype handling
+        # Create FNO blocks for 1D temporal sequences
         self.fno_blocks = nn.ModuleList()
-        for _ in range(L):
-            # Wrap spectral conv in a custom block to ensure proper dtype handling
-            spectral_conv = SpectralConvND(hidden, hidden, n_modes)
+        
+        # Ensure n_modes is properly formatted for 1D and convert from Hydra config
+        # Convert from Hydra ListConfig to regular Python list/tuple
+        if hasattr(n_modes, '_content'):
+            n_modes = list(n_modes)
+        
+        if isinstance(n_modes, (list, tuple)) and len(n_modes) > 1:
+            # If 2D modes provided, use only the first for 1D
+            n_modes_1d = tuple([n_modes[0]])
+            print(f"Converting 2D modes {n_modes} to 1D modes {n_modes_1d}")
+        elif isinstance(n_modes, (list, tuple)):
+            n_modes_1d = tuple(n_modes)
+        else:
+            n_modes_1d = tuple([n_modes])
             
-            # Create sequential block with explicit type handling
+        for _ in range(L):
+            # Create 1D spectral convolution layer with complex dtype support
+            spectral_conv = SpectralConvND(
+                in_ch=hidden, 
+                out_ch=hidden, 
+                n_modes=n_modes_1d  # Dimensionality inferred from n_modes length
+            )
+            
+            # Note: proj parameter is already properly initialized in SpectralConvND constructor
+            # Complex dtype conversion is handled in compl_weight() method
+            
+            # Create FNO block
             fno_block = nn.Sequential(
                 spectral_conv,
-                nn.Conv2d(hidden, hidden, 1),  # point-wise W
-                nn.GELU()
+                nn.GELU(),
+                ChannelMLP(hidden, hidden, hidden)
             )
             
             self.fno_blocks.append(fno_block)
@@ -46,11 +68,11 @@ class StackedFNO(pl.LightningModule):
         self.proj = ChannelMLP(hidden, hidden, out_ch)
 
     def add_coords(self, h):
-        """Add normalized coordinate channels to input"""
-        B, C, S, X = h.shape
-        s = torch.linspace(-1, 0, S, device=h.device)[None, None, :, None].expand(B, 1, S, X)
-        x = torch.linspace(0, 1, X, device=h.device)[None, None, None, :].expand(B, 1, S, X)
-        return torch.cat([h, s, x], dim=1)
+        """Add normalized coordinate channels to input for 1D temporal sequences"""
+        B, C, S = h.shape
+        # Add temporal coordinate channel (normalized from -1 to 0 for history)
+        s = torch.linspace(-1, 0, S, device=h.device)[None, None, :].expand(B, 1, S)
+        return torch.cat([h, s], dim=1)
 
     def forward(self, hist):
         """
@@ -59,14 +81,14 @@ class StackedFNO(pl.LightningModule):
         Parameters:
         -----------
         hist : torch.Tensor
-            History tensor of shape (B, C, S, X)
+            History tensor of shape (B, C, S) for 1D temporal sequences
             
         Returns:
         --------
-        torch.Tensor: Predicted next window of shape (B, C, S, X)
+        torch.Tensor: Predicted next window of shape (B, C, S)
         """
         # Get actual input shape and adapt the model if necessary
-        B, C, S, X = hist.shape
+        B, C, S = hist.shape
         
         # Initialize the _first_forward flag if it doesn't exist
         if not hasattr(self, '_first_forward'):
@@ -81,22 +103,26 @@ class StackedFNO(pl.LightningModule):
                 print(f"Channel mismatch detected: Expected {self.in_ch}, got {C}")
                 old_in_ch = self.in_ch
                 self.in_ch = C
-                # Recreate lift layer with correct input channel count
-                self.lift = ChannelMLP(C + 2, self.hidden, self.hidden).to(hist.device)
+                # Recreate lift layer with correct input channel count (C + 1 for temporal coordinate)
+                # Properly register the new module and handle device/dtype
+                new_lift = ChannelMLP(C + 1, self.hidden, self.hidden)
+                new_lift = new_lift.to(device=hist.device, dtype=hist.dtype)
+                # Properly register the new module
+                self.lift = new_lift
                 print(f"Adjusted lift layer input channels from {old_in_ch} to {C}")
             self._first_forward = False
         
         # Add coordinate channels
-        z = self.add_coords(hist)  # (B, C+2, S, X)
+        z = self.add_coords(hist)  # (B, C+1, S)
         
         # Permute to move channels to last dimension for MLP
-        z_perm = z.permute(0, 2, 3, 1)  # (B, S, X, C+2)
+        z_perm = z.permute(0, 2, 1)  # (B, S, C+1)
         
         # Lift to hidden dimension
-        z = self.lift(z_perm)  # (B, S, X, hidden)
+        z = self.lift(z_perm)  # (B, S, hidden)
         
         # Move channels back to second dim for convolution
-        z = z.permute(0, 3, 1, 2)  # (B, hidden, S, X)
+        z = z.permute(0, 2, 1)  # (B, hidden, S)
         
         # Apply FNO blocks with checkpointing if available
         for blk in self.fno_blocks:
@@ -106,12 +132,12 @@ class StackedFNO(pl.LightningModule):
                 z = blk(z)
         
         # Project back to output dimension
-        out = self.proj(z.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        out = self.proj(z.permute(0, 2, 1)).permute(0, 2, 1)  # (B, C, S)
         
         return out
     
     def training_step(self, batch, batch_idx):
-        """Lightning training step with improved shape handling"""
+        """Lightning training step with improved shape handling for 1D sequences"""
         try:
             # Get data and print shapes (on first batch)
             hist = batch["hist"]  # Expected: (B, S, nx) from pad_collate
@@ -120,18 +146,10 @@ class StackedFNO(pl.LightningModule):
             if batch_idx == 0:
                 print(f"[training_step] Input shapes: hist={hist.shape}, target={target.shape}")
             
-            # Reshape to (B, C, S, X) format expected by forward pass
+            # Reshape to (B, C, S) format expected by forward pass for 1D sequences
             # Move channels (nx) to second dimension
             hist = hist.permute(0, 2, 1)  # (B, nx, S)
-            
-            # Add final dimension for 2D convolution operations
-            if len(hist.shape) == 3:  # (B, nx, S)
-                hist = hist.unsqueeze(-1)  # (B, nx, S, 1)
-            
-            # Similarly process target
             target = target.permute(0, 2, 1)  # (B, nx, T)
-            if len(target.shape) == 3:
-                target = target.unsqueeze(-1)  # (B, nx, T, 1)
                 
             if batch_idx == 0:
                 print(f"[training_step] Reshaped: hist={hist.shape}, target={target.shape}")
@@ -167,7 +185,7 @@ class StackedFNO(pl.LightningModule):
             raise
     
     def validation_step(self, batch, batch_idx):
-        """Lightning validation step with improved shape handling"""
+        """Lightning validation step with improved shape handling for 1D sequences"""
         try:
             # Get data from batch
             hist = batch["hist"]  # Expected: (B, S, nx) from pad_collate
@@ -176,18 +194,10 @@ class StackedFNO(pl.LightningModule):
             if batch_idx == 0:
                 print(f"[validation_step] Input shapes: hist={hist.shape}, target={target.shape}")
             
-            # Reshape to (B, C, S, X) format expected by forward pass
+            # Reshape to (B, C, S) format expected by forward pass for 1D sequences
             # Move channels (nx) to second dimension
             hist = hist.permute(0, 2, 1)  # (B, nx, S)
-            
-            # Add final dimension for 2D convolution operations
-            if len(hist.shape) == 3:  # (B, nx, S)
-                hist = hist.unsqueeze(-1)  # (B, nx, S, 1)
-            
-            # Similarly process target
             target = target.permute(0, 2, 1)  # (B, nx, T)
-            if len(target.shape) == 3:
-                target = target.unsqueeze(-1)  # (B, nx, T, 1)
                 
             if batch_idx == 0:
                 print(f"[validation_step] Reshaped: hist={hist.shape}, target={target.shape}")

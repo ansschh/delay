@@ -15,7 +15,14 @@ train:
   num_workers: 4
 
 logging:
-  use_wandb: true
+  use_wandb: false  # Disabled to avoid import errors
   project_name: delay-no
   entity: null  # Your wandb username or team name
   log_steps: 50
+
+# Hydra configuration to avoid warning about future versions not changing working directory
+hydra:
+  job:
+    chdir: True  # Explicitly set to True to maintain current behavior
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}

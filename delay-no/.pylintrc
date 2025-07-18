@@ -1,0 +1,11 @@
+[MASTER]
+ignore-patterns=
+
+[MESSAGES CONTROL]
+disable=all
+
+[FORMAT]
+max-line-length=120
+
+[DESIGN]
+max-args=10

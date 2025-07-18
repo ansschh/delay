@@ -29,31 +29,32 @@ class SpectralConvND(nn.Module):
 
     def compl_weight(self):
         try:
-            # Create complex weight with explicit casting to complex
+            # Create complex coefficients
             complex_coeff = torch.complex(self.coeff_real, self.coeff_imag)
             
-            # Complex einsum needs special handling - convert projection to complex type
-            proj_complex = torch.complex(
-                self.proj,  # Real part
-                torch.zeros_like(self.proj)  # Imaginary part (zero)
-            )
+            # Convert proj to complex dtype for einsum operations
+            proj_complex = self.proj.to(dtype=torch.complex64)
             
-            # Debug shape and dtype info
-            if not hasattr(self, '_printed_weight_debug'):
-                print(f"[compl_weight] proj shape: {proj_complex.shape}, dtype: {proj_complex.dtype}")
-                print(f"[compl_weight] complex_coeff shape: {complex_coeff.shape}, dtype: {complex_coeff.dtype}")
-                self._printed_weight_debug = True
+            # Compute complex weights using einsum
+            # CRITICAL FIX: Rearrange dimensions to [out_ch, in_ch, modes...] for proper slicing
+            if self.n_dims == 1:
+                # proj: [out_ch, r], complex_coeff: [r, modes, in_ch]
+                # Result: [out_ch, in_ch, modes] - rearranged for proper slicing
+                weight = torch.einsum("or,rmi->oim", proj_complex, complex_coeff)
+            elif self.n_dims == 2:
+                # proj: [out_ch, r], complex_coeff: [r, modes_x, modes_y, in_ch]
+                # Result: [out_ch, in_ch, modes_x, modes_y] - rearranged for proper slicing
+                weight = torch.einsum("or,rmni->oimn", proj_complex, complex_coeff)
+            else:
+                raise NotImplementedError(f"Spectral convolution not implemented for {self.n_dims}D")
             
-            # Use einsum with both inputs as complex tensors
-            w = torch.einsum("or, r...i -> o...i", proj_complex, complex_coeff)
-            return w
+            return weight
             
         except Exception as e:
             print(f"Error in compl_weight: {str(e)}")
-            print(f"proj: {self.proj.shape if hasattr(self, 'proj') else 'N/A'}, "
-                  f"dtype: {self.proj.dtype if hasattr(self, 'proj') else 'N/A'}")
-            print(f"coeff_real: {self.coeff_real.shape if hasattr(self, 'coeff_real') else 'N/A'}, "
-                  f"dtype: {self.coeff_real.dtype if hasattr(self, 'coeff_real') else 'N/A'}")
+            print(f"proj shape: {self.proj.shape}")
+            print(f"coeff_real shape: {self.coeff_real.shape}")
+            print(f"coeff_imag shape: {self.coeff_imag.shape}")
             raise
 
     def forward(self, x):
@@ -67,67 +68,51 @@ class SpectralConvND(nn.Module):
             # Convert range to tuple for dim parameter
             x_ft = torch.fft.rfftn(x, dim=tuple(range(-self.n_dims, 0)))
             
-            # Get complex weights
-            W = self.compl_weight()  # (O, k1,…,kn, I)
+            # Get complex weights with corrected layout: [out_ch, in_ch, modes...]
+            W = self.compl_weight()
             
             if not hasattr(self, '_printed_weights') or not self._printed_weights:
                 print(f"[SpectralConvND] Weight shape: {W.shape}, dtype: {W.dtype}")
                 self._printed_weights = True
             
             # Apply convolution in Fourier space
-            # Note: need to handle each mode separately
+            # Initialize output tensor with correct shape
             out_ft = torch.zeros(x_ft.shape[:-self.n_dims] + (self.out_ch,) + 
                                 x_ft.shape[-self.n_dims:], 
                                 dtype=torch.complex64, device=x.device)
             
-            # For simplicity, handling 1D and 2D cases explicitly
+            # Handle 1D and 2D cases with corrected weight indexing
             if self.n_dims == 1:
-                # Ensure compatible types
-                x_ft_slice = x_ft[..., :self.n_modes[0]]
-                out_ft[..., :self.n_modes[0]] = torch.einsum(
-                    "bi, oi -> bo", x_ft_slice, W)
+                # Get actual available modes (RFFT reduces last dimension)
+                available_modes = min(self.n_modes[0], x_ft.shape[-1])
+                
+                # Extract slices: x_ft [..., :modes], W [out_ch, in_ch, :modes]
+                x_ft_slice = x_ft[..., :available_modes]  # [B, in_ch, modes]
+                w_slice = W[:, :, :available_modes]       # [out_ch, in_ch, modes]
+                
+                # Perform batched matrix multiplication over modes
+                # einsum: batch, input_ch, modes -> batch, output_ch, modes
+                out_ft[..., :available_modes] = torch.einsum("bim,oim->bom", x_ft_slice, w_slice)
+                
             elif self.n_dims == 2:
-                # Get slices up to the modes we're using
+                # Get actual available modes (RFFT reduces last dimension)
                 modes_x = min(self.n_modes[0], x_ft.shape[-2])
                 modes_y = min(self.n_modes[1], x_ft.shape[-1])
                 
-                # Add debugging for full tensor shapes
                 if not hasattr(self, '_printed_debug_dims') or not self._printed_debug_dims:
-                    print(f"[SpectralConvND] x_ft full shape: {x_ft.shape}")
-                    print(f"[SpectralConvND] W full shape: {W.shape}")
+                    print(f"[SpectralConvND] x_ft shape: {x_ft.shape}")
+                    print(f"[SpectralConvND] W shape: {W.shape}")
                     print(f"[SpectralConvND] Using modes: {modes_x}, {modes_y}")
                     self._printed_debug_dims = True
                 
-                for i in range(modes_x):
-                    for j in range(modes_y):
-                        try:
-                            # Extract slices carefully with correct dimensions
-                            x_ft_slice = x_ft[..., i, j]  # Shape: [B, C]
-                            w_slice = W[..., i, j]         # Shape: [O, C]
-                            
-                            # Debug shape and dtype on first iteration
-                            if i == 0 and j == 0 and (not hasattr(self, '_printed_slice_debug') or not self._printed_slice_debug):
-                                print(f"[SpectralConvND] x_ft_slice: {x_ft_slice.shape}, {x_ft_slice.dtype}")
-                                print(f"[SpectralConvND] w_slice: {w_slice.shape}, {w_slice.dtype}")
-                                self._printed_slice_debug = True
-                                
-                            # Ensure the contraction dimension matches (input channels)
-                            # Properly align dimensions for the einsum
-                            # bi,oi->bo: b=batch, i=input channels, o=output channels
-                            out_ft[..., i, j] = torch.einsum("bi,oi->bo", x_ft_slice, w_slice)
-                            
-                        except Exception as e:
-                            print(f"Error in spectral conv at indices {i},{j}: {str(e)}")
-                            print(f"x_ft_slice shape: {x_ft_slice.shape}, w_slice shape: {w_slice.shape}")
-                            if i == 0 and j == 0:
-                                # Only for the first error, print detailed info
-                                print(f"Input feature map shape: {x.shape}")
-                                print(f"Weight shape: {W.shape}")
-                                print(f"Full x_ft shape: {x_ft.shape}")
-                                # Try to identify the issue
-                                print(f"Expected dims: x_ft: [B, in_ch, ...], W: [out_ch, ..., in_ch]")
-                                print(f"Actual dims: x_ft: {x_ft.shape}, W: {W.shape}")
-                            raise
+                # Extract slices: x_ft [..., :modes_x, :modes_y], W [out_ch, in_ch, :modes_x, :modes_y]
+                x_ft_slice = x_ft[..., :modes_x, :modes_y]  # [B, in_ch, modes_x, modes_y]
+                w_slice = W[:, :, :modes_x, :modes_y]       # [out_ch, in_ch, modes_x, modes_y]
+                
+                # Perform batched matrix multiplication over spatial modes
+                # einsum: batch, input_ch, modes_x, modes_y -> batch, output_ch, modes_x, modes_y
+                out_ft[..., :modes_x, :modes_y] = torch.einsum("bimn,oimn->bomn", x_ft_slice, w_slice)
+                
             else:
                 # General N-dimensional case would require more complex indexing
                 raise NotImplementedError("Only 1D and 2D spectral convolutions are implemented")

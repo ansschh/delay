@@ -1,11 +1,18 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
+# Disable TensorFlow/TensorBoard warnings and errors right at the start
 import os
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Disable TensorFlow logging
+os.environ['PYTHONWARNINGS'] = 'ignore::FutureWarning,ignore::DeprecationWarning'  # Ignore warnings
 import sys
 import torch
+
+# Set PyTorch to use Tensor Cores efficiently
+torch.set_float32_matmul_precision('high')
+
 import hydra
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
-from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger
+# from pytorch_lightning.loggers import WandbLogger, TensorBoardLogger  # Disabled to avoid import errors
 from omegaconf import DictConfig, OmegaConf
 import logging
 
@@ -36,11 +43,14 @@ def get_model(config):
     model_type = config.model.name
     
     if model_type == "stacked":
+        # Convert n_modes from Hydra ListConfig to tuple
+        n_modes = tuple(config.model.n_modes) if hasattr(config.model.n_modes, '__iter__') else config.model.n_modes
+        
         model = StackedFNO(
             in_ch=config.model.in_ch,
             out_ch=config.model.out_ch,
             S=config.model.S,
-            n_modes=config.model.n_modes,
+            n_modes=n_modes,
             hidden=config.model.hidden_dim,
             L=config.model.n_layers,
             lr=config.train.lr,
@@ -74,7 +84,7 @@ def get_model(config):
     return model
 
 
-@hydra.main(config_path="../configs", config_name="train")
+@hydra.main(config_path="../configs", config_name="train", version_base="1.1")
 def train(config: DictConfig):
     """
     Main training function
@@ -113,19 +123,10 @@ def train(config: DictConfig):
     
     callbacks = [checkpoint_callback, lr_monitor]
     
-    # Configure logger
-    if config.logging.use_wandb:
-        wandb_logger = WandbLogger(
-            name=f"{config.model.name}_{config.data.family}",
-            project=config.logging.project_name,
-            entity=config.logging.entity,
-            tags=[config.model.name, config.data.family],
-        )
-        # Log hyperparameters
-        wandb_logger.log_hyperparams(dict(config))
-        logger_to_use = wandb_logger
-    else:
-        logger_to_use = True  # Use default logger
+    # Use only default logger to avoid import/compatibility issues
+    # Disable all external loggers (WandB, TensorBoard, etc.) for now
+    logger_to_use = True  # Use default PyTorch Lightning logger
+    print("Using default PyTorch Lightning logger (external loggers disabled)")
     
     # Setup trainer
     trainer = pl.Trainer(

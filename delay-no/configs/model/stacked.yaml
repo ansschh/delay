@@ -1,8 +1,8 @@
-# Configuration for Stacked-history FNO (Variant A)
+# Configuration for Stacked-history FNO (Variant A) - 1D Temporal Sequences
 name: stacked
 in_ch: 1          # Input channels 
 out_ch: 1         # Output channels
 S: 16             # History points (sequence length)
-n_modes: [8, 8]   # Number of Fourier modes to keep (1D or 2D)
+n_modes: [16]     # Number of Fourier modes to keep (1D for temporal sequences)
 hidden_dim: 64    # Hidden dimension
 n_layers: 4       # Number of FNO layers

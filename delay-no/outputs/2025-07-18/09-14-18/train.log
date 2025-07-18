@@ -1,0 +1,4 @@
+[2025-07-18 09:14:18,638][__main__][INFO] - Run directory: D:\dno\delay-no\outputs\2025-07-18\09-14-18
+[2025-07-18 09:14:18,645][__main__][INFO] - Model parameters: 582529
+[2025-07-18 09:14:25,076][tensorflow][WARNING] - From C:\Users\Ansh\AppData\Local\Programs\Python\Python311\Lib\site-packages\keras\src\losses.py:2976: The name tf.losses.sparse_softmax_cross_entropy is deprecated. Please use tf.compat.v1.losses.sparse_softmax_cross_entropy instead.
+
