@@ -114,6 +114,10 @@ class StackedHistoryDataset(DDEChunk):
     def __getitem__(self, idx):
         hist, tau, t, y = self.samples[idx]
         
+        # Debug: Print raw sample shapes
+        if idx == 0:  # Only print for first sample
+            print(f"[Dataset] Raw sample shapes: hist={type(hist)}, tau={tau}, t={t.shape}, y={y.shape}")
+        
         # Set defaults if not specified
         if self.horizon is None:
             self.horizon = t[-1] - t[0]  # Use entire time span
@@ -124,6 +128,10 @@ class StackedHistoryDataset(DDEChunk):
                 self.nx = y.shape[1]
             else:
                 self.nx = 1
+                
+        # Validation: Ensure nx is valid
+        if self.nx <= 0:
+            raise ValueError(f"Invalid nx value: {self.nx}. Must be positive.")
         
         # Create uniform grid for history
         s_axis = np.linspace(-tau, 0, self.S)
@@ -161,10 +169,31 @@ class StackedHistoryDataset(DDEChunk):
         target_tensor = torch.tensor(target.T, dtype=torch.float32)   # (nx,T_out)
         tau_tensor = torch.tensor([tau], dtype=torch.float32)
         
+        # Ensure consistent shapes with proper permutation
+        if len(hist_tensor.shape) > 1:
+            # Ensure (S, nx) format for history
+            hist_output = hist_tensor.permute(1, 0)  # (S, nx)
+        else:
+            hist_output = hist_tensor.unsqueeze(0)  # (1, 1) for single values
+            
+        if len(target_tensor.shape) > 1:
+            # Ensure (T, nx) format for targets
+            target_output = target_tensor.permute(1, 0)  # (T, nx)
+        else:
+            target_output = target_tensor.unsqueeze(0)  # (1, 1) for single values
+            
+        # Debug: Print tensor shapes occasionally
+        if idx == 0:  # Only print for first sample
+            print(f"[Dataset] Output tensor shapes: hist={hist_output.shape}, target={target_output.shape}")
+            
+        # Final validation check
+        if hist_output.shape[1] != self.nx:
+            raise ValueError(f"History shape mismatch. Expected shape[1]={self.nx}, got {hist_output.shape}")
+            
         return {
-            "hist": hist_tensor.permute(1, 0) if len(hist_tensor.shape) > 1 else hist_tensor.unsqueeze(0),  # (nx, S)
+            "hist": hist_output,  # (S, nx)
             "tau": tau_tensor,
-            "y": target_tensor.permute(1, 0) if len(target_tensor.shape) > 1 else target_tensor.unsqueeze(0)  # (nx, T)
+            "y": target_output  # (T, nx)
         }
 
 class MethodStepsDataset(DDEChunk):

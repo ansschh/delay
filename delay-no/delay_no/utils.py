@@ -118,17 +118,50 @@ def to_torch(array, device=None):
     return tensor.to(device) if device is not None else tensor
 
 def pad_collate(batch: List[Dict[str, Any]]):
-    """Custom collate_fn that stacks fixed-size tensors.
+    """Custom collate_fn that stacks fixed-size tensors with improved error handling.
 
     Assumes each item in the batch is a dict with keys:
-        hist:  (nx, S) tensor
-        y:     (nx, T_out) tensor (already padded/truncated in Dataset)
-        tau:   (1,) tensor
+        hist:  (S, nx) tensor - history values
+        y:     (T, nx) tensor - target values (already padded/truncated in Dataset)
+        tau:   (1,) tensor - delay parameter
     """
-    hist = torch.stack([item["hist"] for item in batch], dim=0)   # (B,nx,S)
-    y    = torch.stack([item["y"] for item in batch], dim=0)      # (B,nx,T_out)
-    tau  = torch.stack([item["tau"] for item in batch], dim=0)    # (B,1)
-    return {"hist": hist, "y": y, "tau": tau}
+    try:
+        # Validate input shapes for consistent dimensions
+        first_hist_shape = batch[0]["hist"].shape
+        first_y_shape = batch[0]["y"].shape
+        
+        # Ensure all batch items have consistent dimensions
+        for i, item in enumerate(batch):
+            if item["hist"].shape != first_hist_shape:
+                raise ValueError(
+                    f"Inconsistent hist shape at batch index {i}: "
+                    f"Expected {first_hist_shape}, got {item['hist'].shape}"
+                )
+            if item["y"].shape != first_y_shape:
+                raise ValueError(
+                    f"Inconsistent y shape at batch index {i}: "
+                    f"Expected {first_y_shape}, got {item['y'].shape}"
+                )
+        
+        # Stack tensors along batch dimension
+        hist = torch.stack([item["hist"] for item in batch], dim=0)   # (B,S,nx)
+        y = torch.stack([item["y"] for item in batch], dim=0)      # (B,T,nx)
+        tau = torch.stack([item["tau"] for item in batch], dim=0)    # (B,1)
+        
+        # Print shapes of first batch for debugging
+        print(f"[pad_collate] Batch shapes: hist={hist.shape}, y={y.shape}, tau={tau.shape}")
+        
+        return {"hist": hist, "y": y, "tau": tau}
+    except Exception as e:
+        # Provide more informative error message with batch details
+        print(f"Error in pad_collate: {e}")
+        print(f"Batch size: {len(batch)}")
+        if len(batch) > 0:
+            print(f"First item keys: {batch[0].keys()}")
+            for key, value in batch[0].items():
+                if hasattr(value, 'shape'):
+                    print(f"  {key} shape: {value.shape}")
+        raise
 
 
 class Timer:

@@ -59,21 +59,26 @@ class StackedFNO(pl.LightningModule):
         --------
         torch.Tensor: Predicted next window of shape (B, C, S, X)
         """
-        # Get actual input shape and adapt the model if this is the first forward pass
+        # Get actual input shape and adapt the model if necessary
         B, C, S, X = hist.shape
         
+        # Initialize the _first_forward flag if it doesn't exist
+        if not hasattr(self, '_first_forward'):
+            self._first_forward = True
+            
         # Handle channel dimension mismatch by recreating the lift layer if needed
         # This allows the model to adapt to the actual channel count at runtime
-        if hasattr(self, '_first_forward') and self._first_forward:
+        if self._first_forward:
+            print(f"First forward pass with input shape: {hist.shape}, in_ch: {self.in_ch}")
             if C != self.in_ch:
                 # Update in_ch to match actual input
+                print(f"Channel mismatch detected: Expected {self.in_ch}, got {C}")
+                old_in_ch = self.in_ch
                 self.in_ch = C
                 # Recreate lift layer with correct input channel count
                 self.lift = ChannelMLP(C + 2, self.hidden, self.hidden).to(hist.device)
-                print(f"Adjusted lift layer input channels from {self.in_ch} to {C}")
+                print(f"Adjusted lift layer input channels from {old_in_ch} to {C}")
             self._first_forward = False
-        else:
-            self._first_forward = True
         
         # Add coordinate channels
         z = self.add_coords(hist)  # (B, C+2, S, X)
@@ -100,54 +105,97 @@ class StackedFNO(pl.LightningModule):
         return out
     
     def training_step(self, batch, batch_idx):
-        """Lightning training step"""
-        # Handle different input shapes - reshape to (B, C, S, X)
-        hist = batch["hist"]
-        if len(hist.shape) == 3:  # (B, nx, S)
-            # Add spatial dimension X=1
-            hist = hist.unsqueeze(-1)  # (B, nx, S, 1)
-        
-        target = batch["y"]
-        if len(target.shape) == 3:  # (B, nx, T)
-            # Add spatial dimension X=1
-            target = target.unsqueeze(-1)  # (B, nx, T, 1)
-        
-        # Forward pass
-        pred = self.forward(hist)
-        
-        # Calculate loss
-        mse_loss = torch.nn.functional.mse_loss(pred, target)
-        
-        # Optional: spectral loss component
-        if hasattr(self, "spectral_weight") and self.spectral_weight > 0:
-            pred_fft = torch.fft.rfft2(pred, dim=(-2, -1))
-            target_fft = torch.fft.rfft2(target, dim=(-2, -1))
-            spectral_loss = torch.nn.functional.mse_loss(pred_fft.abs(), target_fft.abs())
-            loss = mse_loss + 0.1 * spectral_loss
-            self.log("train_spectral_loss", spectral_loss)
-        else:
-            loss = mse_loss
+        """Lightning training step with improved shape handling"""
+        try:
+            # Get data and print shapes (on first batch)
+            hist = batch["hist"]  # Expected: (B, S, nx) from pad_collate
+            target = batch["y"]   # Expected: (B, T, nx) from pad_collate
             
-        self.log("train_loss", loss)
-        self.log("train_mse", mse_loss)
-        
-        return loss
+            if batch_idx == 0:
+                print(f"[training_step] Input shapes: hist={hist.shape}, target={target.shape}")
+            
+            # Reshape to (B, C, S, X) format expected by forward pass
+            # Move channels (nx) to second dimension
+            hist = hist.permute(0, 2, 1)  # (B, nx, S)
+            
+            # Add final dimension for 2D convolution operations
+            if len(hist.shape) == 3:  # (B, nx, S)
+                hist = hist.unsqueeze(-1)  # (B, nx, S, 1)
+            
+            # Similarly process target
+            target = target.permute(0, 2, 1)  # (B, nx, T)
+            if len(target.shape) == 3:
+                target = target.unsqueeze(-1)  # (B, nx, T, 1)
+                
+            if batch_idx == 0:
+                print(f"[training_step] Reshaped: hist={hist.shape}, target={target.shape}")
+            
+            # Forward pass
+            pred = self.forward(hist)
+            
+            if batch_idx == 0:
+                print(f"[training_step] Output shape: pred={pred.shape}")
+            
+            # Calculate loss
+            mse_loss = torch.nn.functional.mse_loss(pred, target)
+            
+            # Optional: spectral loss component
+            if hasattr(self, "spectral_weight") and self.spectral_weight > 0:
+                pred_fft = torch.fft.rfft2(pred, dim=(-2, -1))
+                target_fft = torch.fft.rfft2(target, dim=(-2, -1))
+                spectral_loss = torch.nn.functional.mse_loss(pred_fft.abs(), target_fft.abs())
+                loss = mse_loss + 0.1 * spectral_loss
+                self.log("train_spectral_loss", spectral_loss)
+            else:
+                loss = mse_loss
+                
+            self.log("train_loss", loss)
+            self.log("train_mse", mse_loss)
+            
+            return loss
+            
+        except Exception as e:
+            print(f"Error in training_step: {str(e)}")
+            print(f"Input shapes: hist={hist.shape if 'hist' in locals() else 'N/A'}, "
+                  f"target={target.shape if 'target' in locals() else 'N/A'}")
+            raise
     
     def validation_step(self, batch, batch_idx):
-        """Lightning validation step"""
-        # Handle different input shapes - reshape to (B, C, S, X)
-        hist = batch["hist"]
-        if len(hist.shape) == 3:  # (B, nx, S)
-            # Add spatial dimension X=1
-            hist = hist.unsqueeze(-1)  # (B, nx, S, 1)
-        
-        target = batch["y"]
-        if len(target.shape) == 3:  # (B, nx, T)
-            # Add spatial dimension X=1
-            target = target.unsqueeze(-1)  # (B, nx, T, 1)
-        
-        # Forward pass
-        pred = self.forward(hist)
+        """Lightning validation step with improved shape handling"""
+        try:
+            # Get data from batch
+            hist = batch["hist"]  # Expected: (B, S, nx) from pad_collate
+            target = batch["y"]   # Expected: (B, T, nx) from pad_collate
+            
+            if batch_idx == 0:
+                print(f"[validation_step] Input shapes: hist={hist.shape}, target={target.shape}")
+            
+            # Reshape to (B, C, S, X) format expected by forward pass
+            # Move channels (nx) to second dimension
+            hist = hist.permute(0, 2, 1)  # (B, nx, S)
+            
+            # Add final dimension for 2D convolution operations
+            if len(hist.shape) == 3:  # (B, nx, S)
+                hist = hist.unsqueeze(-1)  # (B, nx, S, 1)
+            
+            # Similarly process target
+            target = target.permute(0, 2, 1)  # (B, nx, T)
+            if len(target.shape) == 3:
+                target = target.unsqueeze(-1)  # (B, nx, T, 1)
+                
+            if batch_idx == 0:
+                print(f"[validation_step] Reshaped: hist={hist.shape}, target={target.shape}")
+            
+            # Forward pass
+            pred = self.forward(hist)
+            
+            if batch_idx == 0:
+                print(f"[validation_step] Output shape: pred={pred.shape}")
+        except Exception as e:
+            print(f"Error in validation_step: {str(e)}")
+            print(f"Input shapes: hist={hist.shape if 'hist' in locals() else 'N/A'}, "
+                  f"target={target.shape if 'target' in locals() else 'N/A'}")
+            raise
         
         # Calculate loss
         mse_loss = torch.nn.functional.mse_loss(pred, target)

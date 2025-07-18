@@ -39,10 +39,25 @@ class DelayDataModule(pl.LightningDataModule):
         # Get variant from config
         variant = self.model_config.get("name", self.model_config.get("variant", "stacked"))
         
+        # Ensure consistency between model and dataset parameters
+        data_config = dict(self.data_config)
+        
+        # If model config has parameters that should be consistent with dataset, use those values
+        if "S" in self.model_config and "S" in data_config:
+            if self.model_config["S"] != data_config["S"]:
+                logger.warning(f"Model S={self.model_config['S']} doesn't match data S={data_config['S']}. Using model value.")
+                data_config["S"] = self.model_config["S"]
+                
+        # If model defines in_ch/out_ch, ensure dataset nx is consistent
+        if "in_ch" in self.model_config and "nx" in data_config:
+            if self.model_config["in_ch"] != data_config["nx"]:
+                logger.warning(f"Model in_ch={self.model_config['in_ch']} doesn't match data nx={data_config['nx']}. Using model value.")
+                data_config["nx"] = self.model_config["in_ch"]
+        
         # Create dataloaders
         self.train_loader, self.val_loader = create_data_module(
             variant,
-            self.data_config
+            data_config
         )
         
         # Log dataloader status
