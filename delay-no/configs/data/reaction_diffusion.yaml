@@ -1,0 +1,3 @@
+# Configuration for Reaction-Diffusion dataset
+family: reaction_diffusion
+path: "../../data"  # Relative path to datasets from working directory

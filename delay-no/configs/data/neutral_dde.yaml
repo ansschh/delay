@@ -1,0 +1,3 @@
+# Configuration for Neutral DDE dataset
+family: neutral_dde
+path: "../../data"  # Relative path to datasets from working directory

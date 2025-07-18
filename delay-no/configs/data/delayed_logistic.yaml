@@ -1,0 +1,3 @@
+# Configuration for Delayed-Logistic dataset
+family: delayed_logistic
+path: "../../data"  # Relative path to datasets from working directory
